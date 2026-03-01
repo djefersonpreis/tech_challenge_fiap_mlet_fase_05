@@ -27,6 +27,7 @@ services:
       - ./dashboards:/app/dashboards
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
     command: ["streamlit", "run", "dashboards/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     restart: unless-stopped
     depends_on:

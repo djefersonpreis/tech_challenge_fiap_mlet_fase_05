@@ -53,6 +53,47 @@ def load_production_data(limit: int = 500) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(records[-limit:])
+
+    # Encode production data to match preprocessed reference data schema.
+    # The reference data is already encoded (int/float), but raw predictions
+    # arrive with original string values.
+    from src.utils.constants import (
+        DESTAQUE_MAPPING,
+        GENDER_MAPPING,
+        INSTITUTION_MAPPING,
+        PEDRA_ORDER,
+        REC_PSICOLOGIA_MAPPING,
+        YES_NO_MAPPING,
+    )
+
+    encoding_map = {
+        "Gênero": GENDER_MAPPING,
+        "Instituição de ensino": INSTITUTION_MAPPING,
+        "Pedra 22": PEDRA_ORDER,
+        "Atingiu PV": YES_NO_MAPPING,
+        "Indicado": YES_NO_MAPPING,
+        "Rec Psicologia": REC_PSICOLOGIA_MAPPING,
+    }
+    for col, mapping in encoding_map.items():
+        if col in df.columns and df[col].dtype == "object":
+            df[col] = df[col].map(mapping).fillna(0).astype(int)
+
+    # Map Destaque columns to _bin variants (reference uses _bin suffix)
+    destaque_renames = {}
+    for col in list(df.columns):
+        if col.startswith("Destaque ") and not col.endswith("_bin"):
+            bin_col = col + "_bin"
+            if df[col].dtype == "object":
+                df[col] = df[col].apply(
+                    lambda x: 1 if isinstance(x, str) and "destaque" in x.lower() else 0,
+                )
+            destaque_renames[col] = bin_col
+    df.rename(columns=destaque_renames, inplace=True)
+
+    # Derive Anos_no_programa if Ano ingresso is present
+    if "Ano ingresso" in df.columns and "Anos_no_programa" not in df.columns:
+        df["Anos_no_programa"] = 2024 - df["Ano ingresso"]
+
     logger.info(f"Loaded {len(df)} production records")
     return df
 
@@ -73,12 +114,17 @@ def generate_drift_report(
         Dict with drift detection results.
     """
     try:
-        from evidently import ColumnMapping
-        from evidently.metric_preset import DataDriftPreset
-        from evidently.report import Report
+        from evidently.legacy.pipeline.column_mapping import ColumnMapping
+        from evidently.legacy.metric_preset import DataDriftPreset
+        from evidently.legacy.report import Report
     except ImportError:
-        logger.warning("Evidently not installed. Skipping drift report.")
-        return {"error": "Evidently not installed"}
+        try:
+            from evidently import ColumnMapping
+            from evidently.metric_preset import DataDriftPreset
+            from evidently.report import Report
+        except ImportError:
+            logger.warning("Evidently not installed. Skipping drift report.")
+            return {"error": "Evidently not installed"}
 
     if reference is None:
         reference = load_reference_data()
